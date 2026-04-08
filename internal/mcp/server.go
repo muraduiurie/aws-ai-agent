@@ -8,6 +8,7 @@ import (
 	"github.com/mark3labs/mcp-go/server"
 
 	"github.com/muraduiurie/aws-ai-agent/internal/aws"
+	"github.com/muraduiurie/aws-ai-agent/internal/kube"
 	"github.com/muraduiurie/aws-ai-agent/internal/tools"
 )
 
@@ -16,21 +17,23 @@ const (
 	serverVersion = "0.1.0"
 )
 
-// Server bundles the MCP server with the AWS client factory.
+// Server bundles the MCP server with the AWS client factory and Kubernetes client.
 type Server struct {
-	MCP     *server.MCPServer
-	Factory *aws.Factory
+	MCP        *server.MCPServer
+	AWSFactory *aws.Factory
+	KubeClient kube.Client
 }
 
 // NewServer creates and configures the MCP server instance.
-func NewServer(factory *aws.Factory) *Server {
+func NewServer(awsFactory *aws.Factory, kubeClient kube.Client) *Server {
 	s := &Server{
 		MCP: server.NewMCPServer(
 			serverName,
 			serverVersion,
 			server.WithToolCapabilities(true),
 		),
-		Factory: factory,
+		AWSFactory: awsFactory,
+		KubeClient: kubeClient,
 	}
 	s.registerTools()
 	return s
@@ -38,7 +41,9 @@ func NewServer(factory *aws.Factory) *Server {
 
 // registerTools registers all tool groups with the MCP server.
 func (s *Server) registerTools() {
-	tools.RegisterEC2(s.MCP, s.Factory)
+	tools.RegisterEC2(s.MCP, s.AWSFactory)
+	tools.RegisterEKS(s.MCP, s.AWSFactory)
+	tools.RegisterKube(s.MCP, s.KubeClient)
 }
 
 // Start begins listening for MCP messages over stdio.
