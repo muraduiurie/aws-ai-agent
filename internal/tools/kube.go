@@ -13,13 +13,40 @@ import (
 	"github.com/muraduiurie/aws-ai-agent/pkg/types"
 )
 
-func RegisterKube(s *server.MCPServer, client kube.Client) {
-	s.AddTool(listPodsDefinition(), listPodsHandler(client))
-	s.AddTool(getPodDefinition(), getPodHandler(client))
-	s.AddTool(createPodDefinition(), createPodHandler(client))
-	s.AddTool(updatePodDefinition(), updatePodHandler(client))
-	s.AddTool(deletePodDefinition(), deletePodHandler(client))
-	s.AddTool(getPodLogsDefinition(), getPodLogsHandler(client))
+func RegisterKube(s *server.MCPServer, holder *kube.ClientHolder) {
+	s.AddTool(setKubeconfigDefinition(), setKubeconfigHandler(holder))
+	s.AddTool(listPodsDefinition(), listPodsHandler(holder))
+	s.AddTool(getPodDefinition(), getPodHandler(holder))
+	s.AddTool(createPodDefinition(), createPodHandler(holder))
+	s.AddTool(updatePodDefinition(), updatePodHandler(holder))
+	s.AddTool(deletePodDefinition(), deletePodHandler(holder))
+	s.AddTool(getPodLogsDefinition(), getPodLogsHandler(holder))
+}
+
+// ── set_kubeconfig ────────────────────────────────────────────────────────────
+
+func setKubeconfigDefinition() mcp.Tool {
+	return mcp.NewTool(
+		"set_kubeconfig",
+		mcp.WithDescription("Initialize the Kubernetes client by injecting a kubeconfig string. Call this after get_eks_kubeconfig before using any Kubernetes tools."),
+		mcp.WithString("kubeconfig",
+			mcp.Description("Full kubeconfig content as a string (YAML or JSON)."),
+			mcp.Required(),
+		),
+	)
+}
+
+func setKubeconfigHandler(holder *kube.ClientHolder) server.ToolHandlerFunc {
+	return func(ctx context.Context, req mcp.CallToolRequest) (*mcp.CallToolResult, error) {
+		kubeconfig, err := req.RequireString("kubeconfig")
+		if err != nil {
+			return mcp.NewToolResultError(err.Error()), nil
+		}
+		if err := holder.Set(kubeconfig); err != nil {
+			return mcp.NewToolResultErrorFromErr("failed to initialize Kubernetes client", err), nil
+		}
+		return mcp.NewToolResultText("Kubernetes client initialized successfully"), nil
+	}
 }
 
 // ── list_pods ────────────────────────────────────────────────────────────────
@@ -38,8 +65,12 @@ func listPodsDefinition() mcp.Tool {
 	)
 }
 
-func listPodsHandler(client kube.Client) server.ToolHandlerFunc {
+func listPodsHandler(holder *kube.ClientHolder) server.ToolHandlerFunc {
 	return func(ctx context.Context, req mcp.CallToolRequest) (*mcp.CallToolResult, error) {
+		client, ok := holder.Get()
+		if !ok {
+			return mcp.NewToolResultError("Kubernetes client not initialized: call set_kubeconfig first"), nil
+		}
 		namespace, err := req.RequireString("namespace")
 		if err != nil {
 			return mcp.NewToolResultError(err.Error()), nil
@@ -81,8 +112,12 @@ func getPodDefinition() mcp.Tool {
 	)
 }
 
-func getPodHandler(client kube.Client) server.ToolHandlerFunc {
+func getPodHandler(holder *kube.ClientHolder) server.ToolHandlerFunc {
 	return func(ctx context.Context, req mcp.CallToolRequest) (*mcp.CallToolResult, error) {
+		client, ok := holder.Get()
+		if !ok {
+			return mcp.NewToolResultError("Kubernetes client not initialized: call set_kubeconfig first"), nil
+		}
 		namespace, err := req.RequireString("namespace")
 		if err != nil {
 			return mcp.NewToolResultError(err.Error()), nil
@@ -122,8 +157,12 @@ func createPodDefinition() mcp.Tool {
 	)
 }
 
-func createPodHandler(client kube.Client) server.ToolHandlerFunc {
+func createPodHandler(holder *kube.ClientHolder) server.ToolHandlerFunc {
 	return func(ctx context.Context, req mcp.CallToolRequest) (*mcp.CallToolResult, error) {
+		client, ok := holder.Get()
+		if !ok {
+			return mcp.NewToolResultError("Kubernetes client not initialized: call set_kubeconfig first"), nil
+		}
 		namespace, err := req.RequireString("namespace")
 		if err != nil {
 			return mcp.NewToolResultError(err.Error()), nil
@@ -168,8 +207,12 @@ func updatePodDefinition() mcp.Tool {
 	)
 }
 
-func updatePodHandler(client kube.Client) server.ToolHandlerFunc {
+func updatePodHandler(holder *kube.ClientHolder) server.ToolHandlerFunc {
 	return func(ctx context.Context, req mcp.CallToolRequest) (*mcp.CallToolResult, error) {
+		client, ok := holder.Get()
+		if !ok {
+			return mcp.NewToolResultError("Kubernetes client not initialized: call set_kubeconfig first"), nil
+		}
 		namespace, err := req.RequireString("namespace")
 		if err != nil {
 			return mcp.NewToolResultError(err.Error()), nil
@@ -214,8 +257,12 @@ func deletePodDefinition() mcp.Tool {
 	)
 }
 
-func deletePodHandler(client kube.Client) server.ToolHandlerFunc {
+func deletePodHandler(holder *kube.ClientHolder) server.ToolHandlerFunc {
 	return func(ctx context.Context, req mcp.CallToolRequest) (*mcp.CallToolResult, error) {
+		client, ok := holder.Get()
+		if !ok {
+			return mcp.NewToolResultError("Kubernetes client not initialized: call set_kubeconfig first"), nil
+		}
 		namespace, err := req.RequireString("namespace")
 		if err != nil {
 			return mcp.NewToolResultError(err.Error()), nil
@@ -256,8 +303,12 @@ func getPodLogsDefinition() mcp.Tool {
 	)
 }
 
-func getPodLogsHandler(client kube.Client) server.ToolHandlerFunc {
+func getPodLogsHandler(holder *kube.ClientHolder) server.ToolHandlerFunc {
 	return func(ctx context.Context, req mcp.CallToolRequest) (*mcp.CallToolResult, error) {
+		client, ok := holder.Get()
+		if !ok {
+			return mcp.NewToolResultError("Kubernetes client not initialized: call set_kubeconfig first"), nil
+		}
 		namespace, err := req.RequireString("namespace")
 		if err != nil {
 			return mcp.NewToolResultError(err.Error()), nil

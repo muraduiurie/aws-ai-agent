@@ -8,42 +8,28 @@ import (
 	"syscall"
 
 	"github.com/muraduiurie/aws-ai-agent/internal/aws"
-	"github.com/muraduiurie/aws-ai-agent/internal/config"
 	"github.com/muraduiurie/aws-ai-agent/internal/kube"
 	"github.com/muraduiurie/aws-ai-agent/internal/mcp"
+	"github.com/muraduiurie/aws-ai-agent/pkg/config"
 )
-
-const kubeconfigPathEnv = "KUBECONFIG_PATH"
 
 func main() {
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	defer stop()
 
-	cfg := config.Load()
+	cfg, err := config.Load()
+	if err != nil {
+		log.Fatalf("failed to load config: %v", err)
+	}
 
-	awsFactory, err := aws.NewFactory(ctx, cfg)
+	awsFactory, err := aws.NewFactory(ctx, &cfg.AWS)
 	if err != nil {
 		log.Fatalf("failed to initialize AWS client factory: %v", err)
 	}
 
-	var kubeconfig *string
-	if path := os.Getenv(kubeconfigPathEnv); path != "" {
-		data, err := os.ReadFile(path)
-		if err != nil {
-			log.Fatalf("failed to read kubeconfig from %s: %v", path, err)
-		}
-		content := string(data)
-		kubeconfig = &content
-	}
+	s := mcp.NewServer(awsFactory, &kube.ClientHolder{})
 
-	kubeClient, err := kube.NewClient(kubeconfig)
-	if err != nil {
-		log.Fatalf("failed to initialize Kubernetes client: %v", err)
-	}
-
-	s := mcp.NewServer(awsFactory, kubeClient)
-
-	log.Printf("starting %s (region=%s, read-only=%v)", "aws-mcp-server", cfg.AWSRegion, cfg.ReadOnly)
+	log.Printf("starting %s (region=%s, read-only=%v)", "aws-mcp-server", cfg.AWS.Region, cfg.AWS.ReadOnly)
 
 	if err := s.Start(ctx); err != nil {
 		log.Fatalf("server error: %v", err)

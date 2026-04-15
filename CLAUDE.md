@@ -34,12 +34,13 @@ golangci-lint run
 ## Architecture
 
 ```
-cmd/server/main.go        ← Entry point: wires config, AWS factory, Kubernetes client, MCP server, tool registration
-internal/config/          ← Server config (read-only mode, default region, AWS profile)
+cmd/server/main.go        ← Entry point: wires config, AWS factory, ClientHolder, MCP server, tool registration
 internal/aws/             ← AWS client factory + one file per service (ec2.go, eks.go)
-internal/kube/            ← Kubernetes client interface + pod operations
+internal/kube/            ← Kubernetes client interface, pod operations, and ClientHolder (holder.go)
 internal/mcp/             ← MCP server struct, tool registration, stdio transport
 internal/tools/           ← One file per service (ec2.go, eks.go, kube.go); definitions, handlers, registration
+pkg/agent/                ← Agent interface + Claude implementation (agent.go, claude.go)
+pkg/config/               ← Unified config loader: YAML via Viper (AI) + env vars (AWS)
 pkg/types/                ← Shared output structs (ec2.go, eks.go, kube.go)
 ```
 
@@ -51,6 +52,7 @@ pkg/types/                ← Shared output structs (ec2.go, eks.go, kube.go)
 | `list_eks_clusters` | EKS | List cluster names in a region |
 | `get_eks_cluster` | EKS | Get details of a specific EKS cluster |
 | `get_eks_kubeconfig` | EKS | Generate a kubeconfig string for an EKS cluster |
+| `set_kubeconfig` | Kube | Inject a kubeconfig string to initialize the Kubernetes client at runtime |
 | `list_pods` | Kube | List pods in a namespace, optional label selector |
 | `get_pod` | Kube | Get details of a specific pod |
 | `create_pod` | Kube | Create a pod from a JSON manifest string |
@@ -63,8 +65,9 @@ pkg/types/                ← Shared output structs (ec2.go, eks.go, kube.go)
 - `internal/tools/` files must not import each other; shared types go in `pkg/types/`.
 - AWS service clients are never constructed in `internal/tools/`. Each method on `Factory` creates its own client with a per-call region override (`eks.NewFromConfig(f.cfg, func(o *eks.Options) { o.Region = region })`). Tools receive the `Factory` and call its methods.
 - The Kubernetes `Client` is an **interface** (`internal/kube/Client`). The concrete type (`client`) is unexported. `NewClient(*string)` returns the interface — use this for mocking in tests.
-- Config is loaded once at startup in `main.go` and passed down; no global state.
-- `config.Config.ReadOnly` is loaded but not yet enforced. Before adding any mutating tool (start/stop/terminate), add enforcement in `registerTools()` or at the handler level.
+- The Kubernetes client is **lazily initialized** via `kube.ClientHolder`. The MCP server holds a `*kube.ClientHolder` (never a bare `kube.Client`). All kube tool handlers call `holder.Get()` at the top and return a tool error if the client is not yet set.
+- Config is loaded once at startup in `main.go` and passed down; no global state. `pkg/config.Load()` is the single entry point — it reads the YAML file and env vars together.
+- `config.AWSConfig.ReadOnly` is loaded but not yet enforced. Before adding any mutating tool (start/stop/terminate), add enforcement in `registerTools()` or at the handler level.
 
 ## Transport
 
@@ -72,11 +75,17 @@ The server uses **stdio** as its transport. `Start()` wraps the MCP server in `s
 
 ## Kubernetes client connection
 
+The Kubernetes client is **not initialized at startup**. `main.go` passes a zero-value `&kube.ClientHolder{}` to the MCP server. The AI agent must call `set_kubeconfig` before any other Kubernetes tool.
+
+`kube.ClientHolder` (`internal/kube/holder.go`) is a thread-safe wrapper:
+- `Set(kubeconfig string) error` — parses the kubeconfig content and atomically replaces the held client. On error the existing client (if any) is preserved.
+- `Get() (Client, bool)` — returns the current client and whether it has been initialized.
+
 `kube.NewClient(kubeconfig *string)`:
 - `nil` → in-cluster config (`rest.InClusterConfig`)
 - non-nil → parses the provided kubeconfig **content** (not a file path) via `clientcmd.RESTConfigFromKubeConfig`
 
-In `main.go`, if `KUBECONFIG_PATH` env var is set, the file at that path is read into a string and passed as a pointer. This is the intended integration point for a Helm-managed Secret volume mount.
+The intended agent workflow is: `get_eks_kubeconfig` → `set_kubeconfig` → any Kubernetes tools.
 
 ## EKS kubeconfig generation
 
@@ -86,7 +95,7 @@ In `main.go`, if `KUBECONFIG_PATH` env var is set, the file at that path is read
 3. Token format: `k8s-aws-v1.<base64url(presigned_url)>`
 4. Renders and returns a complete kubeconfig YAML string
 
-The returned string can be passed directly to `kube.NewClient(&kubeconfig)`.
+The returned string should be passed to the `set_kubeconfig` tool to initialize the Kubernetes client.
 
 ## Adding a new tool
 
@@ -108,6 +117,65 @@ Call the registration function from `registerTools()` in `internal/mcp/server.go
 - Return structured data: `mcp.NewToolResultJSON(value)` — returns `(*CallToolResult, error)`
 - Return plain text: `mcp.NewToolResultText("...")`
 - Return error to the agent: `mcp.NewToolResultError("msg")` or `mcp.NewToolResultErrorFromErr("msg", err)`
+
+## Application config (pkg/config)
+
+`pkg/config` loads the application YAML configuration file using Viper.
+
+**Config file location**: read from the `CONFIG_PATH` environment variable; defaults to `/etc/aws-ai-agent/config.yaml`.
+
+**Structure** (`config.example.yaml` at the repo root is the canonical reference):
+
+```yaml
+ai:
+  claude:
+    token: "your-anthropic-api-key"
+    maxToken: 4096
+    model: "claude-opus-4-6"
+```
+
+AWS configuration is **not** in the YAML file — it is read from environment variables as before (`AWS_REGION` / `AWS_DEFAULT_REGION`, `AWS_PROFILE`, `READ_ONLY`).
+
+**Go structs**:
+
+```
+Config
+├── AI (AIConfig)          ← from YAML via Viper
+│   └── Claude (ClaudeConfig)
+│       ├── Token    string
+│       ├── MaxToken int
+│       └── Model    string
+└── AWS (AWSConfig)        ← from environment variables
+    ├── Profile  string
+    ├── Region   string
+    └── ReadOnly bool
+```
+
+**Usage**:
+
+```go
+cfg, err := config.Load()
+// cfg.AI.Claude.{Token,Model,MaxToken}
+// cfg.AWS.{Region,Profile,ReadOnly}
+```
+
+Note: Viper normalizes YAML keys case-insensitively internally; the `mapstructure` tags preserve camelCase mapping (`maxToken` → `MaxToken`). `AWSConfig` carries `mapstructure:"-"` so Viper ignores it during YAML unmarshaling.
+
+## Agent package
+
+`pkg/agent` provides the AI agent abstraction used to drive agentic logic on top of the MCP tools.
+
+- **`Agent` interface** (`agent.go`) — currently exposes `Ping(ctx context.Context) (string, error)`
+- **`NewAgent(cfg *config.ClaudeConfig) (Agent, error)`** (`claude.go`) — constructs a `claudeAgent` backed by the Anthropic Go SDK; reads `Token`, `Model`, and `MaxToken` from the config struct
+- **`claudeAgent.Ping`** — sends a 16-token "ping" message and returns the model's response text; use it to verify API key validity and connectivity before running agent workflows
+
+Default model: `claude-opus-4-6`.
+
+```go
+cfg, err := config.Load()
+agent, err := agent.NewAgent(&cfg.AI.Claude)
+response, err := agent.Ping(ctx)
+```
 
 ## Adding a new AWS service
 

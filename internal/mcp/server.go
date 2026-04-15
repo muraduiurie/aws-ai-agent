@@ -17,15 +17,15 @@ const (
 	serverVersion = "0.1.0"
 )
 
-// Server bundles the MCP server with the AWS client factory and Kubernetes client.
+// Server bundles the MCP server with the AWS client factory and Kubernetes client holder.
 type Server struct {
 	MCP        *server.MCPServer
 	AWSFactory *aws.Factory
-	KubeClient kube.Client
+	KubeHolder *kube.ClientHolder
 }
 
 // NewServer creates and configures the MCP server instance.
-func NewServer(awsFactory *aws.Factory, kubeClient kube.Client) *Server {
+func NewServer(awsFactory *aws.Factory, kubeHolder *kube.ClientHolder) *Server {
 	s := &Server{
 		MCP: server.NewMCPServer(
 			serverName,
@@ -33,7 +33,7 @@ func NewServer(awsFactory *aws.Factory, kubeClient kube.Client) *Server {
 			server.WithToolCapabilities(true),
 		),
 		AWSFactory: awsFactory,
-		KubeClient: kubeClient,
+		KubeHolder: kubeHolder,
 	}
 	s.registerTools()
 	return s
@@ -43,7 +43,7 @@ func NewServer(awsFactory *aws.Factory, kubeClient kube.Client) *Server {
 func (s *Server) registerTools() {
 	tools.RegisterEC2(s.MCP, s.AWSFactory)
 	tools.RegisterEKS(s.MCP, s.AWSFactory)
-	tools.RegisterKube(s.MCP, s.KubeClient)
+	tools.RegisterKube(s.MCP, s.KubeHolder)
 }
 
 // Start begins listening for MCP messages over stdio.
