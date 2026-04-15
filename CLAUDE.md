@@ -7,7 +7,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 Go-based MCP (Model Context Protocol) server that exposes AWS and Kubernetes resource management as tools consumable by AI agents.
 
 Module: `github.com/muraduiurie/aws-ai-agent`
-Go version: 1.24
+Go version: 1.25
 
 ## Commands
 

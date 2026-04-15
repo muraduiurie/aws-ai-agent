@@ -8,12 +8,14 @@ A `CLAUDE.md` was created early to capture the module name, build commands, arch
 
 ## Phase 2 — Dependencies
 
-Four direct dependencies were installed:
+Four direct dependencies were installed at this phase:
 
 - `github.com/mark3labs/mcp-go` — MCP protocol implementation (server, tool registration, stdio transport)
 - `github.com/aws/aws-sdk-go-v2` — AWS SDK core
 - `github.com/aws/aws-sdk-go-v2/config` — credential and region resolution
 - `github.com/aws/aws-sdk-go-v2/service/ec2` — EC2 service client
+
+Two further direct dependencies were added in later phases: `github.com/anthropics/anthropic-sdk-go` (Phase 9) and `github.com/spf13/viper` (Phase 10a). The Kubernetes client libraries (`k8s.io/api`, `k8s.io/apimachinery`, `k8s.io/client-go`) were also pulled in alongside the kube tooling.
 
 ## Phase 3 — Wiring the entry point
 
