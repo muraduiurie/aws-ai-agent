@@ -3,3 +3,11 @@ ai:
     token: "your-anthropic-api-key"
     maxToken: 4096
     model: "claude-opus-4-6"
+
+aws:
+  region: "eu-west-3"
+  profile: ""
+  # readOnly: when true, is intended to block any tool that mutates AWS or
+  # Kubernetes resources (e.g. create/update/delete). Currently loaded and
+  # logged at startup but not yet enforced — no handler checks it today.
+  readOnly: false

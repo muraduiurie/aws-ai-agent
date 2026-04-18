@@ -15,7 +15,7 @@ const (
 // Config is the top-level configuration structure.
 type Config struct {
 	AI  AIConfig  `mapstructure:"ai"`
-	AWS AWSConfig `mapstructure:"-"` // populated from environment variables
+	AWS AWSConfig `mapstructure:"aws"` // base from YAML; env vars override
 }
 
 // AIConfig groups all AI provider configurations.
@@ -30,11 +30,21 @@ type ClaudeConfig struct {
 	Model    string `mapstructure:"model"`
 }
 
-// AWSConfig holds AWS connection parameters resolved from environment variables.
+// AWSConfig holds AWS connection parameters.
+// Values are read from the YAML file first; environment variables override them.
 type AWSConfig struct {
-	Profile  string
-	Region   string
-	ReadOnly bool
+	Profile string `mapstructure:"profile"`
+	Region  string `mapstructure:"region"`
+
+	// ReadOnly, when true, is intended to prevent any tool that mutates AWS or
+	// Kubernetes resources from executing. It is loaded and logged at startup
+	// but is NOT YET ENFORCED — no handler checks it today.
+	//
+	// Before adding any mutating tool (e.g. start/stop EC2 instances,
+	// terminate nodes, create/update/delete Kubernetes resources), enforce this
+	// flag in registerTools() in internal/mcp/server.go or at the individual
+	// handler level in internal/tools/.
+	ReadOnly bool `mapstructure:"readOnly"`
 }
 
 // Load reads the YAML configuration file from the path specified by
@@ -59,24 +69,27 @@ func Load() (*Config, error) {
 		return nil, fmt.Errorf("unmarshal config: %w", err)
 	}
 
-	cfg.AWS = loadAWSFromEnv()
+	cfg.AWS = mergeAWSEnvVars(cfg.AWS)
 
 	return &cfg, nil
 }
 
-// loadAWSFromEnv resolves AWS configuration from environment variables,
-// mirroring the behaviour of the AWS SDK's own credential chain.
-func loadAWSFromEnv() AWSConfig {
-	region := os.Getenv("AWS_REGION")
-	if region == "" {
-		region = os.Getenv("AWS_DEFAULT_REGION")
+// mergeAWSEnvVars overrides YAML-sourced AWS values with environment variables
+// where the variables are explicitly set. The precedence is: env var > YAML > default.
+func mergeAWSEnvVars(base AWSConfig) AWSConfig {
+	if v := os.Getenv("AWS_REGION"); v != "" {
+		base.Region = v
+	} else if v := os.Getenv("AWS_DEFAULT_REGION"); v != "" {
+		base.Region = v
 	}
-	if region == "" {
-		region = "eu-west-3"
+	if base.Region == "" {
+		base.Region = "eu-west-3"
 	}
-	return AWSConfig{
-		Profile:  os.Getenv("AWS_PROFILE"),
-		Region:   region,
-		ReadOnly: os.Getenv("READ_ONLY") == "true",
+	if v := os.Getenv("AWS_PROFILE"); v != "" {
+		base.Profile = v
 	}
+	if os.Getenv("READ_ONLY") == "true" {
+		base.ReadOnly = true
+	}
+	return base
 }
